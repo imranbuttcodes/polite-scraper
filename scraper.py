@@ -2,6 +2,7 @@ import requests
 import time
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, field_validator
+import json
 
 
 # 1. Introduce ourselves politely
@@ -42,35 +43,43 @@ def download_page(url: str):
     
     return response.text
 
-# --- Let's test it! ---
-if __name__ == "__main__":
-    test_url = "https://books.toscrape.com/catalogue/page-1.html"
-    html_content = download_page(test_url)
-    
-    print("Parsing HTML...")
-    # 1. Hand the messy HTML over to BeautifulSoup
-    soup = BeautifulSoup(html_content, "html.parser")
-    
-    # 2. Find all the "book boxes" on the page
-    # (On this website, every book is wrapped in an <article class="product_pod"> tag)
-    books = soup.find_all("article", class_="product_pod")
-    
-    print(f"Found {len(books)} books on the page!\n")
 
-    # 3. Let's loop through just the first 3 books to see what data we can grab
-        # 3. Let's loop through just the first 3 books
-    for book in books[:3]:
-        title = book.h3.a["title"]
-        price_text = book.find("p", class_="price_color").text
-        availability = book.find("p", class_="instock availability").text.strip()
+if __name__ == "__main__":
+    all_clean_books = []
+    
+    # We want to scrape Pages 1, 2, and 3
+    # We will also try Page 999 just to prove our script survives a broken page!
+    pages_to_scrape = [1, 2, 3, 999]
+    
+    for page_num in pages_to_scrape:
+        url = f"https://books.toscrape.com/catalogue/page-{page_num}.html"
         
-        # --- Pass the messy data into our strict Pydantic model ---
-        clean_book = Book(
-            title=title,
-            price=price_text,
-            availability=availability
-        )
+        try:
+            html_content = download_page(url)
+            soup = BeautifulSoup(html_content, "html.parser")
+            books = soup.find_all("article", class_="product_pod")
+            
+            for book in books:
+                title = book.h3.a["title"]
+                price_text = book.find("p", class_="price_color").text
+                availability = book.find("p", class_="instock availability").text.strip()
+                
+                # Clean and validate!
+                clean_book = Book(title=title, price=price_text, availability=availability)
+                
+                # Save the clean python dictionary to our master list
+                all_clean_books.append(clean_book.model_dump())
+                
+        except requests.exceptions.HTTPError as e:
+            # If the page doesn't exist (like page 999), the server returns a 404 error.
+            # Instead of crashing, we catch it gracefully!
+            print(f"⚠️ Whoops! Page {page_num} is broken or doesn't exist. Skipping it!")
+            continue
+
+    # Finally, save all 60 books to a JSON file!
+    print(f"\nSuccessfully scraped {len(all_clean_books)} books!")
+    
+    with open("books.json", "w") as f:
+        json.dump(all_clean_books, f, indent=4)
         
-        # Notice how the price prints out as a clean number now!
-        print(clean_book.model_dump())
-        
+    print("Saved all data to books.json!")
